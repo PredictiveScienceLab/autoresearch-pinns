@@ -51,7 +51,7 @@ SIREN_FIRST_W0 = 30.0
 SIREN_HIDDEN_W0 = 1.0
 
 # Training data and loss weighting
-INTERIOR_POINTS = 512
+INTERIOR_POINTS = 1024
 INITIAL_POINTS = 512
 BOUNDARY_POINTS = 512
 SAMPLING_METHOD = "sobol"   # sobol | uniform | grid
