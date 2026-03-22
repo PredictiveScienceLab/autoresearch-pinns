@@ -43,7 +43,7 @@ NETWORK_FAMILY = "mlp"      # mlp | resmlp | siren
 INPUT_ENCODING = "raw"      # raw | fourier
 ACTIVATION = "tanh"         # tanh | silu | gelu | relu
 DEPTH = 6                   # hidden depth / number of blocks
-HIDDEN_DIM = 128
+HIDDEN_DIM = 96
 FOURIER_FEATURES = 64       # ignored unless INPUT_ENCODING == "fourier"
 FOURIER_SCALE = 4.0
 FOURIER_SEED = 0
