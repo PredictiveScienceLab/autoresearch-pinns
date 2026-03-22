@@ -81,7 +81,7 @@ optimizer_name:   adam
 
 ## Cached reference solution
 
-`prepare.py` builds a deterministic Burgers reference solution using a Cole-Hopf / cosine-series construction and stores:
+`prepare.py` builds a deterministic Burgers reference solution using a high-resolution finite-volume SSP-RK3 solver and stores:
 
 - `burgers_reference.npz` — validation coordinates and reference values
 - `manifest.json` — machine-readable problem and artifact metadata

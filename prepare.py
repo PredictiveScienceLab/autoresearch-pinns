@@ -38,10 +38,10 @@ TIME_BUDGET = 300  # 5 minutes, matching autoresearch's fixed-budget setup
 EVAL_X_POINTS = 256
 EVAL_T_POINTS = 101
 
-# Cole-Hopf / cosine-series reference construction
-REFERENCE_SERIES_TERMS = 512
-REFERENCE_QUADRATURE_POINTS = 8193
-REFERENCE_BUILDER = "cole-hopf-neumann-cosine-series-v1"
+# Deterministic numerical reference construction
+REFERENCE_SOLVER_POINTS = 8193
+REFERENCE_CFL = 0.2
+REFERENCE_BUILDER = "finite-volume-rusanov-ssp-rk3-v1"
 
 # ---------------------------------------------------------------------------
 # Cache paths
@@ -65,8 +65,8 @@ class ProblemSpec:
 @dataclass(frozen=True)
 class ReferenceConfig:
     builder: str = REFERENCE_BUILDER
-    series_terms: int = REFERENCE_SERIES_TERMS
-    quadrature_points: int = REFERENCE_QUADRATURE_POINTS
+    solver_points: int = REFERENCE_SOLVER_POINTS
+    cfl: float = REFERENCE_CFL
     eval_x_points: int = EVAL_X_POINTS
     eval_t_points: int = EVAL_T_POINTS
 
@@ -163,46 +163,54 @@ def sample_boundary_points(
 # Reference solution construction
 # ---------------------------------------------------------------------------
 
-def _trapz_weights(num_points: int, *, length: float) -> np.ndarray:
-    dx = length / (num_points - 1)
-    weights = np.full((num_points,), dx, dtype=np.float64)
-    weights[0] = 0.5 * dx
-    weights[-1] = 0.5 * dx
-    return weights
+def _apply_dirichlet_boundaries(u: np.ndarray) -> np.ndarray:
+    u[0] = 0.0
+    u[-1] = 0.0
+    return u
 
 
-def _phi0(x: np.ndarray) -> np.ndarray:
-    exponent = -(np.cos(math.pi * x) + 1.0) / (2.0 * math.pi * VISCOSITY)
-    return np.exp(exponent)
+def _burgers_rhs(u: np.ndarray, *, dx: float) -> np.ndarray:
+    flux_values = 0.5 * u * u
+    wave_speeds = np.maximum(np.abs(u[:-1]), np.abs(u[1:]))
+    flux = 0.5 * (flux_values[:-1] + flux_values[1:]) - 0.5 * wave_speeds * (u[1:] - u[:-1])
+
+    rhs = np.zeros_like(u)
+    rhs[1:-1] = (
+        -(flux[1:] - flux[:-1]) / dx
+        + VISCOSITY * (u[2:] - 2.0 * u[1:-1] + u[:-2]) / (dx * dx)
+    )
+    return rhs
 
 
 def _build_reference_solution(config: ReferenceConfig) -> dict[str, np.ndarray]:
-    quad_x = np.linspace(X_MIN, X_MAX, config.quadrature_points, dtype=np.float64)
-    quad_weights = _trapz_weights(config.quadrature_points, length=X_MAX - X_MIN)
-    phi0 = _phi0(quad_x)
-
-    modes = np.arange(1, config.series_terms + 1, dtype=np.float64)
-    theta_quad = 0.5 * math.pi * (quad_x[:, None] + 1.0) * modes[None, :]
-    basis_quad = np.cos(theta_quad)
-
-    c0 = 0.5 * np.sum(quad_weights * phi0)
-    coeffs = np.sum((quad_weights * phi0)[:, None] * basis_quad, axis=0)
-    eigenvalues = (0.5 * math.pi * modes) ** 2
-
+    solver_x = np.linspace(X_MIN, X_MAX, config.solver_points, dtype=np.float64)
+    dx = float(solver_x[1] - solver_x[0])
     x_eval = np.linspace(X_MIN, X_MAX, config.eval_x_points, dtype=np.float64)
     t_eval = np.linspace(T_MIN, T_MAX, config.eval_t_points, dtype=np.float64)
-    theta_x = 0.5 * math.pi * (x_eval[:, None] + 1.0) * modes[None, :]
-    cos_x = np.cos(theta_x)
-    sin_x = np.sin(theta_x)
-    decay = np.exp(-VISCOSITY * t_eval[:, None] * eigenvalues[None, :])
+    u = _apply_dirichlet_boundaries(initial_condition(solver_x).astype(np.float64, copy=False))
+    u_eval = np.empty((config.eval_t_points, config.eval_x_points), dtype=np.float64)
+    u_eval[0] = initial_condition(x_eval).astype(np.float64, copy=False)
 
-    weighted = decay[:, None, :] * coeffs[None, None, :]
-    phi = c0 + np.sum(weighted * cos_x[None, :, :], axis=-1)
-    phi_x = np.sum(
-        weighted * (-(0.5 * math.pi) * modes[None, None, :] * sin_x[None, :, :]),
-        axis=-1,
-    )
-    u_eval = -2.0 * VISCOSITY * phi_x / np.clip(phi, 1e-30, None)
+    current_time = 0.0
+    for t_index in range(1, config.eval_t_points):
+        target_time = float(t_eval[t_index])
+        while current_time < target_time - 1e-15:
+            max_speed = max(float(np.max(np.abs(u))), 1e-8)
+            dt_conv = config.cfl * dx / max_speed
+            dt_diff = 0.45 * dx * dx / max(VISCOSITY, 1e-12)
+            dt = min(target_time - current_time, dt_conv, dt_diff)
+
+            k1 = _burgers_rhs(u, dx=dx)
+            u1 = _apply_dirichlet_boundaries(u + dt * k1)
+
+            k2 = _burgers_rhs(u1, dx=dx)
+            u2 = _apply_dirichlet_boundaries(0.75 * u + 0.25 * (u1 + dt * k2))
+
+            k3 = _burgers_rhs(u2, dx=dx)
+            u = _apply_dirichlet_boundaries((1.0 / 3.0) * u + (2.0 / 3.0) * (u2 + dt * k3))
+            current_time += dt
+
+        u_eval[t_index] = np.interp(x_eval, solver_x, u)
 
     grid_x = np.broadcast_to(x_eval[None, :], (config.eval_t_points, config.eval_x_points))
     grid_t = np.broadcast_to(t_eval[:, None], (config.eval_t_points, config.eval_x_points))
@@ -222,12 +230,10 @@ def _build_reference_solution(config: ReferenceConfig) -> dict[str, np.ndarray]:
         "x_eval": x_eval.astype(np.float32),
         "t_eval": t_eval.astype(np.float32),
         "u_eval": u_eval.astype(np.float32),
-        "coeffs": coeffs.astype(np.float32),
-        "c0": np.asarray(c0, dtype=np.float64),
         "initial_linf_error": np.asarray(initial_error, dtype=np.float64),
         "boundary_linf_error": np.asarray(boundary_error, dtype=np.float64),
-        "series_terms": np.asarray(config.series_terms, dtype=np.int32),
-        "quadrature_points": np.asarray(config.quadrature_points, dtype=np.int32),
+        "solver_points": np.asarray(config.solver_points, dtype=np.int32),
+        "cfl": np.asarray(config.cfl, dtype=np.float64),
     }
 
 
