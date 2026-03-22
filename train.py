@@ -40,7 +40,7 @@ SEED = 1337
 
 # Network representation
 NETWORK_FAMILY = "mlp"      # mlp | resmlp | siren
-INPUT_ENCODING = "fourier"  # raw | fourier
+INPUT_ENCODING = "raw"      # raw | fourier
 ACTIVATION = "tanh"         # tanh | silu | gelu | relu
 DEPTH = 6                   # hidden depth / number of blocks
 HIDDEN_DIM = 128
