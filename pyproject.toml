@@ -1,9 +1,9 @@
 [project]
 name = "autoresearch"
 version = "0.1.0"
-description = "Autonomous JAX PINN research swarm for Burgers equation"
+description = "Autonomous JAX surrogate autoresearch for Burgers operators"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "jax==0.9.2",
     "jaxlib==0.9.2",

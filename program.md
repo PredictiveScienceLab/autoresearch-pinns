@@ -1,52 +1,85 @@
 # autoresearch
 
-This repo adapts the autoresearch loop to a scientific machine learning problem:
-JAX-based physics-informed neural networks for the 1D viscous Burgers equation.
+This repo adapts the autoresearch loop to a harder scientific machine learning problem:
+learning a Burgers surrogate operator over a family of viscosities and initial conditions.
 
 ## Setup
 
 To set up a new experiment, work with the user to:
 
 1. **Agree on a run tag**: propose a tag based on today's date (for example `mar22`). The branch `autoresearch/<tag>` must not already exist.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current `master`.
-3. **Read the in-scope files**: the repo is still intentionally small. Read:
-   - `README.md` — repository context and workflow.
-   - `prepare.py` — fixed Burgers problem definition, reference artifact generation, sampling utilities, and evaluation metric. Do not modify.
-   - `train.py` — the only file you modify. JAX network family, optimizer phases, loss weights, collocation sizes, and training strategy all live here.
-4. **Verify reference artifacts exist**: check that `~/.cache/autoresearch-burgers/reference/manifest.json` and `~/.cache/autoresearch-burgers/reference/burgers_reference.npz` exist. If not, tell the human to run `uv run prepare.py`.
+2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current `main`.
+3. **Read the in-scope files**:
+   - `README.md` — repository context and workflow
+   - `prepare.py` — fixed surrogate dataset harness and evaluation metric. Do not modify.
+   - `train.py` — the only file you modify during experiments.
+4. **Verify dataset artifacts exist**: check that `~/.cache/autoresearch-burgers/surrogate/manifest.json` and `~/.cache/autoresearch-burgers/surrogate/burgers_surrogate_dataset.npz` exist. If they do not exist locally and you intend to run on cluster, build them on the cluster first instead of blocking on a local cache.
 5. **Initialize results.tsv**: create `results.tsv` with only the header row shown below. The baseline is logged after the first run.
-6. **Confirm and go**: once the cache and branch are ready, confirm setup looks good.
-
-Once you get confirmation, begin the experiment loop.
+6. **Confirm and go**: once the cache and branch are ready, confirm setup looks good and begin the loop.
 
 ## Experimentation
 
-Each experiment runs for a **fixed 5-minute time budget**. Launch it as:
+Each experiment runs for a **fixed 15-minute time budget**. Launch it as:
 
 ```bash
 uv run train.py
 ```
 
+For heavier runs, prefer the configured SLURM workflow:
+
+- build `prepare.py` artifacts on CPU
+- run `train.py` on GPU
+
+For the current Gautschi setup, use:
+
+```bash
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py doctor --profile gautschi-cpu
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py doctor --profile gautschi-gpu
+
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-cpu \
+  --workload "build Burgers surrogate dataset" \
+  --prefix burgers-surrogate-prepare \
+  --command "python3 prepare.py --jobs 16" \
+  --submit-arg=--cpus-per-task=16 \
+  --submit-arg=--time=01:00:00 \
+  --submit-arg=--mem=32G \
+  --wait --fetch-logs --tail 200
+
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-gpu \
+  --workload "train Burgers surrogate baseline on GPU" \
+  --prefix burgers-surrogate-baseline \
+  --command "python3 prepare.py --help > /dev/null" \
+  --command "python3 train.py" \
+  --submit-arg=--time=01:00:00 \
+  --submit-arg=--mem=48G \
+  --wait --fetch-logs --tail 200
+```
+
+The explicit `prepare.py --help` command in the GPU workload is part of the contract: the cluster runner auto-uploads Python scripts referenced in workload commands, and `train.py` imports `prepare.py`.
+
 **What you CAN do:**
+
 - Modify `train.py` only.
-- Change the neural representation in `train.py`: plain MLP, residual MLP, SIREN, input encoding, depth, width, activation, etc.
-- Change the training algorithm in `train.py`: optimizer phases, learning-rate schedule, loss weights, sampling strategy, collocation counts, gradient clipping, and related hyperparameters.
+- Change the surrogate representation: branch/trunk network family, width, depth, latent size, coordinate encoding, and related architecture details.
+- Change the training algorithm: optimizer phases, schedules, batch sizes, field-point sampling, loss functions, and auxiliary losses.
 
 **What you CANNOT do:**
+
 - Modify `prepare.py`. It is the fixed benchmark harness.
-- Modify the cached reference solution or the validation grid.
-- Install new packages or add dependencies.
-- Change the evaluation metric. `evaluate_model` in `prepare.py` is ground truth.
+- Change the hierarchical GP prior, cached dataset artifacts, or evaluation split sizes.
+- Install new packages or add dependencies during experiments.
+- Change the keep/discard metric.
+- Remove or silently bypass the checkpoint-writing contract in `train.py`.
 
 ## Objective
 
 **Minimize `val_rel_l2`. Lower is better.**
 
-This is the relative L2 error of the learned Burgers solution on the fixed validation grid built in `prepare.py`.
+This is the mean relative L2 error on the fixed validation split generated by `prepare.py`.
 
-Secondary metrics such as `val_rmse`, `val_max_abs`, and memory are for context only. Keep changes simple when possible: if two ideas perform similarly, prefer the simpler code path.
-
-The first run must always establish the baseline using the current `train.py`.
+Secondary metrics such as `val_rmse`, `val_max_abs`, `val_worst_rel_l2`, and the reported test metrics are for context only. The first run must always establish the baseline using the current `train.py`.
 
 ## Output format
 
@@ -57,14 +90,24 @@ Each run ends with a summary like:
 val_rel_l2:       1.234567e-02
 val_rmse:         8.765432e-03
 val_max_abs:      4.321000e-02
-training_seconds: 300.0
-total_seconds:    304.5
+val_worst_rel_l2: 2.345678e-02
+test_rel_l2:      1.456789e-02
+test_rmse:        9.876543e-03
+test_max_abs:     4.876000e-02
+test_worst_rel_l2:3.456789e-02
+training_seconds: 900.0
+total_seconds:    907.5
 peak_vram_mb:     812.4
-num_steps:        1450
-num_params_M:     0.123
-network_family:   mlp
-input_encoding:   raw
-optimizer_name:   adam
+num_steps:        3200
+num_params_M:     0.842
+model_family:     deeponet
+branch_family:    resmlp
+trunk_family:     mlp
+coord_encoding:   fourier
+optimizer_name:   adamw+adamw
+checkpoint_dir:   /abs/path/to/results/checkpoints/<run-id>
+checkpoint_meta:  /abs/path/to/results/checkpoints/<run-id>/metadata.json
+prediction_file:  /abs/path/to/results/checkpoints/<run-id>/predictions.npz
 ```
 
 To extract the main metric from a log file:
@@ -89,16 +132,6 @@ commit	val_rel_l2	memory_gb	status	description
 4. Status: `keep`, `discard`, or `crash`
 5. Short experiment description
 
-Example:
-
-```text
-commit	val_rel_l2	memory_gb	status	description
-a1b2c3d	1.234567e-02	0.8	keep	baseline tanh mlp
-b2c3d4e	9.876543e-03	1.0	keep	switch to Fourier features
-c3d4e5f	1.410000e-02	0.8	discard	reduce interior points too far
-d4e5f6g	0.000000e+00	0.0	crash	unstable SGD phase
-```
-
 ## Experiment loop
 
 The experiment runs on a dedicated branch such as `autoresearch/mar22`.
@@ -108,14 +141,16 @@ LOOP FOREVER:
 1. Inspect the current branch and commit.
 2. Change `train.py` with one clear experimental idea.
 3. Commit the change.
-4. Run the experiment: `uv run train.py > run.log 2>&1`
+4. Run the experiment locally with `uv run train.py > run.log 2>&1`, or use the cluster recipe above for long runs.
 5. Read results: `grep "^val_rel_l2:\|^peak_vram_mb:" run.log`
 6. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, diagnose, and decide whether the idea should be fixed or discarded.
 7. Record the result in `results.tsv` (leave this file untracked).
 8. If `val_rel_l2` improved, keep the commit and continue from there.
-9. If `val_rel_l2` is equal or worse, reset to the previous good commit.
+9. If `val_rel_l2` is equal or worse, revert to the previous good commit.
 
-**Timeout**: if a run exceeds 10 minutes, kill it and treat it as a failure.
+Each run also leaves an untracked checkpoint bundle in `results/checkpoints/`. Keep these artifacts. They are part of the traceability contract and include saved validation/test predictions for later analysis.
+
+**Timeout**: if a run exceeds 25 minutes end to end, kill it and treat it as a failure.
 
 **Crashes**: fix obvious mistakes if the underlying idea still seems sound. If the idea itself is bad or unstable, log `crash`, revert, and move on.
 

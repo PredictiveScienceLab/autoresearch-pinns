@@ -1,103 +1,127 @@
-# autoresearch-burgers
+# autoresearch-pinns
 
-This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for a scientific machine learning benchmark: using JAX-based physics-informed neural networks to solve the 1D viscous Burgers equation accurately.
+This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for a harder scientific machine learning benchmark: learning a surrogate operator for the 1D viscous Burgers equation.
 
-The core autoresearch idea stays the same:
+The fixed task is:
 
-- `prepare.py` is the fixed harness.
-- `train.py` is the single file the agent edits.
-- `program.md` is the human-authored research-org instruction set.
+- input 1: viscosity `nu`
+- input 2: an initial condition `u(x, 0)` sampled from a hierarchical Gaussian random field prior
+- output: the full Burgers solution field `u(x, t)` on a fixed spatio-temporal grid
 
-Instead of language-model pretraining, the benchmark is now:
+The initial-condition prior is hierarchical:
 
+1. sample GP kernel hyperparameters from a prior
+2. conditioned on those hyperparameters, sample an initial condition from a Gaussian process
+3. enforce the zero-boundary structure needed by the Burgers benchmark
+
+That makes the problem substantially harder than fitting a single PDE instance with a PINN. The agent now has to learn an operator over a family of PDEs and initial conditions instead of a single solution.
+
+## Repo structure
+
+The repo remains deliberately small:
+
+- **`prepare.py`**: fixed benchmark harness. It samples the hierarchical GP prior, solves Burgers with a deterministic finite-volume SSP-RK3 solver, caches the dataset, and owns the evaluation metric. Do not modify it during experiments.
+- **`train.py`**: the only editable experiment surface. It contains the surrogate architecture, optimizer schedule, minibatching strategy, and checkpoint-writing logic.
+- **`program.md`**: the experiment protocol for the agent.
+
+## Fixed benchmark
+
+The fixed harness in `prepare.py` defines:
+
+- domain: `x in [-1, 1]`, `t in [0, 1]`
 - PDE: `u_t + u u_x - nu u_xx = 0`
-- Domain: `x in [-1, 1]`, `t in [0, 1]`
-- Viscosity: `nu = 0.01 / pi`
-- Initial condition: `u(x, 0) = -sin(pi x)`
-- Boundary conditions: `u(-1, t) = u(1, t) = 0`
+- viscosity prior: log-uniform on `[2.5e-3, 5.0e-2]`
+- initial-condition prior: hierarchical Gaussian random field with sampled amplitude, lengthscale, and bias
+- dataset split: `512` train, `8` validation, `8` test
+- grid sizes: `128` initial-condition points, `65 x 128` solution field
+- experiment budget: `900` seconds per run
 
-## How it works
+The cached dataset lives under `~/.cache/autoresearch-burgers/surrogate/`.
 
-The repo remains deliberately small and centered on three files:
+## Baseline model
 
-- **`prepare.py`** — fixed problem definition, deterministic sampling helpers, one-time creation of the cached Burgers reference solution, and the fixed validation metric. It is Torch-free and writes NumPy-based cache artifacts. Do not modify during experiments.
-- **`train.py`** — the agent-edited experiment surface. This is where you change the network family, input encoding, optimizer phases, collocation counts, loss weights, and training algorithm. The model stack is Equinox + JAX, and optimization uses Optax.
-- **`program.md`** — the instructions you hand to the coding agent running the experiment loop.
+The current baseline in `train.py` is an Equinox/JAX DeepONet-style surrogate:
 
-By design, each training run still gets a **fixed 5-minute wall-clock budget**. That keeps experiments comparable even when the agent changes the network architecture or optimizer strategy.
+- a branch network consumes the discretized initial condition plus viscosity
+- a trunk network consumes space-time coordinates
+- their latent interaction reconstructs the full field
+- training uses pointwise supervision on sampled field coordinates plus an auxiliary `t=0` consistency loss
 
-The primary metric is now **`val_rel_l2`**: relative L2 error on a fixed validation grid built from a cached Burgers reference solution. Lower is better.
+This is intentionally just a baseline. The agent is expected to search over branch/trunk family, width, depth, latent size, coordinate encoding, loss, batching, and optimizer schedule inside `train.py`.
 
-## Quick start
+## Checkpoint contract
 
-Requirements: Python 3.14+, [`uv`](https://docs.astral.sh/uv/), and enough compute to run repeated JAX PINN training loops. `uv` keeps dependencies in the repo-local environment instead of the global Python install. On macOS and Windows the default dependency set uses CPU-capable JAX. On Linux the default dependency set follows the official CUDA 13 JAX plugin path so GPU-backed experiments are ready by default.
+Every completed run writes an untracked checkpoint bundle under `results/checkpoints/` with:
+
+- serialized Equinox model leaves
+- serialized optimizer state
+- machine-readable metadata
+- snapshots of `train.py` and `prepare.py`
+- cached validation and test predictions for later inspection and figure generation
+
+This is part of the harness contract. Experiments should stay traceable without rerunning old jobs.
+
+## Local usage
+
+Requirements: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and enough compute for JAX training.
 
 ```bash
-# 1. Install dependencies
+# Install the local environment
 uv sync
 
-# 2. Build the fixed Burgers reference artifacts (one-time)
-uv run prepare.py
+# Build the fixed surrogate dataset
+uv run prepare.py --jobs 8
 
-# 3. Run a single baseline PINN experiment (~5 min)
+# Run one baseline experiment
 uv run train.py
 ```
 
-The preparation step writes fixed artifacts to `~/.cache/autoresearch-burgers/reference/`. The local environment will live under `.venv/` once `uv sync` completes.
+`uv` keeps dependencies in the repo-local `.venv/` instead of the global Python environment.
 
-## Research surface
+## Cluster usage
 
-The point of this setup is to let the agent research PINN design choices without changing the benchmark harness. In `train.py`, the agent can explore:
+This benchmark is intended to run on a SLURM cluster:
 
-- network family: `mlp`, `resmlp`, `siren`
-- input encoding: raw coordinates or Fourier features
-- width, depth, activation, SIREN frequency scaling
-- optimizer phases: `adam`, `adamw`, `rmsprop`, `sgd`
-- learning-rate schedule and warmup/cooldown behavior
-- collocation counts, loss weights, gradient clipping, and sampling method
+- build the cached dataset on CPU
+- run surrogate training on GPU
 
-The fixed harness in `prepare.py` exposes deterministic point samplers and a fixed `evaluate_model` routine, while `train.py` keeps the model and optimizer choices agent-controlled.
+The repo includes the `cluster-slurm` skill so the agent can plan, submit, monitor, and fetch cluster workloads reproducibly.
 
-## Output contract
+For the current Gautschi setup, the working high-level commands are:
 
-At the end of every run, `train.py` prints a summary in the form:
+```bash
+# CPU dataset build
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-cpu \
+  --workload "build Burgers surrogate dataset" \
+  --prefix burgers-surrogate-prepare \
+  --command "python3 prepare.py --jobs 16" \
+  --submit-arg=--cpus-per-task=16 \
+  --submit-arg=--time=01:00:00 \
+  --submit-arg=--mem=32G \
+  --wait --fetch-logs --tail 200
 
-```text
----
-val_rel_l2:       1.234567e-02
-val_rmse:         8.765432e-03
-val_max_abs:      4.321000e-02
-training_seconds: 300.0
-total_seconds:    304.5
-peak_vram_mb:     812.4
-num_steps:        1450
-num_params_M:     0.123
-network_family:   mlp
-input_encoding:   raw
-optimizer_name:   adam
+# GPU baseline training
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-gpu \
+  --workload "train Burgers surrogate baseline on GPU" \
+  --prefix burgers-surrogate-baseline \
+  --command "python3 prepare.py --help > /dev/null" \
+  --command "python3 train.py" \
+  --submit-arg=--time=01:00:00 \
+  --submit-arg=--mem=48G \
+  --wait --fetch-logs --tail 200
 ```
 
-`program.md` and the experiment loop should treat `val_rel_l2` as the only keep/discard metric.
+The lightweight `python3 prepare.py --help > /dev/null` command in the GPU run is intentional. The cluster runner auto-uploads Python scripts referenced by workload commands, so this guarantees that `prepare.py` is staged next to `train.py` for the remote `import prepare`.
 
-## Cached reference solution
+## Objective
 
-`prepare.py` builds a deterministic Burgers reference solution using a high-resolution finite-volume SSP-RK3 solver and stores:
+The keep/discard metric is:
 
-- `burgers_reference.npz` — validation coordinates and reference values
-- `manifest.json` — machine-readable problem and artifact metadata
+- **`val_rel_l2`** on the fixed validation split
 
-Training refuses to start if these artifacts are missing or stale. That keeps runs traceable and comparable.
-
-## Design choices
-
-- **Single editable file**: the agent still modifies only `train.py`.
-- **Fixed benchmark**: `prepare.py` owns the PDE, domain, boundary conditions, and validation metric.
-- **Fixed time budget**: every experiment runs for the same wall-clock budget.
-- **Traceable artifacts**: the reference solution is cached with a manifest so future runs can verify exactly what they are evaluating against.
-
-## Running the agent
-
-Start your coding agent in this repo and prompt it to read `program.md`, verify the cached reference artifacts, create a run branch, and begin experimenting on `train.py`.
+Lower is better. Test metrics are reported for context only and should not drive the search loop.
 
 ## License
 
