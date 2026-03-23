@@ -21,7 +21,13 @@ AGENTS.md
 # Experimental code/artifacts
 dev/
 source/
+post/
 
 # Results file
 results.tsv
 run.log
+
+# Local figure build byproducts
+artifacts/*/autoresearch_loop_tikz.aux
+artifacts/*/autoresearch_loop_tikz.log
+artifacts/*/autoresearch_loop_tikz_preview.png

@@ -1,127 +1,99 @@
 # autoresearch-pinns
 
-This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for a harder scientific machine learning benchmark: learning a surrogate operator for the 1D viscous Burgers equation.
+This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for scientific machine learning. The core task here is operator learning for the 1D viscous Burgers equation: given a viscosity `nu` and an initial condition sampled from a hierarchical Gaussian random field prior, predict the full spatio-temporal solution field `u(x, t)`.
 
-The fixed task is:
+The repo is intentionally small:
 
-- input 1: viscosity `nu`
-- input 2: an initial condition `u(x, 0)` sampled from a hierarchical Gaussian random field prior
-- output: the full Burgers solution field `u(x, t)` on a fixed spatio-temporal grid
+- [`prepare.py`](prepare.py): fixed benchmark harness. It samples the prior, solves Burgers with a deterministic finite-volume SSP-RK3 solver, caches the dataset, and owns the evaluation metric.
+- [`train.py`](train.py): the only editable experiment surface.
+- [`program.md`](program.md): the autoresearch protocol.
 
-The initial-condition prior is hierarchical:
+## Tracked Benchmark
 
-1. sample GP kernel hyperparameters from a prior
-2. conditioned on those hyperparameters, sample an initial condition from a Gaussian process
-3. enforce the zero-boundary structure needed by the Burgers benchmark
-
-That makes the problem substantially harder than fitting a single PDE instance with a PINN. The agent now has to learn an operator over a family of PDEs and initial conditions instead of a single solution.
-
-## Repo structure
-
-The repo remains deliberately small:
-
-- **`prepare.py`**: fixed benchmark harness. It samples the hierarchical GP prior, solves Burgers with a deterministic finite-volume SSP-RK3 solver, caches the dataset, and owns the evaluation metric. Do not modify it during experiments.
-- **`train.py`**: the only editable experiment surface. It contains the surrogate architecture, optimizer schedule, minibatching strategy, and checkpoint-writing logic.
-- **`program.md`**: the experiment protocol for the agent.
-
-## Fixed benchmark
-
-The fixed harness in `prepare.py` defines:
+The tracked repo code currently defines the default small benchmark:
 
 - domain: `x in [-1, 1]`, `t in [0, 1]`
 - PDE: `u_t + u u_x - nu u_xx = 0`
 - viscosity prior: log-uniform on `[2.5e-3, 5.0e-2]`
 - initial-condition prior: hierarchical Gaussian random field with sampled amplitude, lengthscale, and bias
 - dataset split: `512` train, `8` validation, `8` test
-- grid sizes: `128` initial-condition points, `65 x 128` solution field
-- experiment budget: `900` seconds per run
+- grids: `128` initial-condition points and a `65 x 128` solution field
+- experiment budget: `900` seconds of training per run
 
-The cached dataset lives under `~/.cache/autoresearch-burgers/surrogate/`.
+The cached dataset for the tracked benchmark lives under `~/.cache/autoresearch-burgers/surrogate/`.
 
-## Baseline model
+The baseline in [`train.py`](train.py) is an Equinox/JAX DeepONet-style surrogate:
 
-The current baseline in `train.py` is an Equinox/JAX DeepONet-style surrogate:
+- a branch network processes the discretized initial condition plus viscosity
+- a trunk network processes space-time coordinates
+- their latent interaction reconstructs the field
+- training uses pointwise supervision plus an auxiliary `t=0` consistency loss
 
-- a branch network consumes the discretized initial condition plus viscosity
-- a trunk network consumes space-time coordinates
-- their latent interaction reconstructs the full field
-- training uses pointwise supervision on sampled field coordinates plus an auxiliary `t=0` consistency loss
+The keep/discard metric is always **`val_rel_l2`** on the fixed validation split. Test metrics are reported for context only.
 
-This is intentionally just a baseline. The agent is expected to search over branch/trunk family, width, depth, latent size, coordinate encoding, loss, batching, and optimizer schedule inside `train.py`.
+## Large-Run Results
 
-## Checkpoint contract
+We also ran a larger isolated cluster experiment with a much harder split:
 
-Every completed run writes an untracked checkpoint bundle under `results/checkpoints/` with:
+- `100000` train
+- `20000` validation
+- `500` test
 
-- serialized Equinox model leaves
-- serialized optimizer state
-- machine-readable metadata
-- snapshots of `train.py` and `prepare.py`
-- cached validation and test predictions for later inspection and figure generation
+That large run was executed from an isolated temp clone so the tracked repo code stayed stable while the autonomous search loop ran on Gautschi. The committed artifact bundle here captures the outputs from that finished run:
 
-This is part of the harness contract. Experiments should stay traceable without rerunning old jobs.
+- ledger copy: [`artifacts/2026-03-23-large-run/results.tsv`](artifacts/2026-03-23-large-run/results.tsv)
+- machine-readable summary: [`artifacts/2026-03-23-large-run/summary.json`](artifacts/2026-03-23-large-run/summary.json)
+- progress figure: [`artifacts/2026-03-23-large-run/figure_progress.svg`](artifacts/2026-03-23-large-run/figure_progress.svg)
+- baseline vs best field examples: [`artifacts/2026-03-23-large-run/figure_examples_fields.svg`](artifacts/2026-03-23-large-run/figure_examples_fields.svg)
+- baseline vs best slice comparisons: [`artifacts/2026-03-23-large-run/figure_examples_slices.svg`](artifacts/2026-03-23-large-run/figure_examples_slices.svg)
+- TikZ loop diagram source and PDF:
+  - [`artifacts/2026-03-23-large-run/autoresearch_loop_tikz.tex`](artifacts/2026-03-23-large-run/autoresearch_loop_tikz.tex)
+  - [`artifacts/2026-03-23-large-run/autoresearch_loop_tikz.pdf`](artifacts/2026-03-23-large-run/autoresearch_loop_tikz.pdf)
 
-## Local usage
+Headline result from that large run:
+
+- baseline: `val_rel_l2 = 2.963700e-02`
+- best run: `val_rel_l2 = 1.683636e-02`
+- relative improvement: `1.76x`
+- validation error reduction: `43.19%`
+
+The best run in that 20-experiment search was experiment `17`, commit `a37ff71`, described in the ledger as `widen branch and trunk hidden layers to 640`.
+
+## Reproducing Figures
+
+The figure generator is committed as [`scripts/make_large_run_figures.py`](scripts/make_large_run_figures.py).
+
+It expects a fetched large-run workspace with the cluster artifacts already mirrored locally. Example:
+
+```bash
+python3 scripts/make_large_run_figures.py \
+  --workspace /tmp/autoresearch-codex-large.woja6k \
+  --output-dir artifacts/2026-03-23-large-run
+```
+
+This script reads the fetched checkpoint bundles, cross-checks every `results.tsv` row against the saved checkpoint metadata, and regenerates the committed figures.
+
+## Local Usage
 
 Requirements: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and enough compute for JAX training.
 
 ```bash
-# Install the local environment
 uv sync
-
-# Build the fixed surrogate dataset
 uv run prepare.py --jobs 8
-
-# Run one baseline experiment
 uv run train.py
 ```
 
-`uv` keeps dependencies in the repo-local `.venv/` instead of the global Python environment.
+`uv` keeps dependencies in the repo-local `.venv/` instead of the global environment.
 
-## Cluster usage
+## Cluster Usage
 
-This benchmark is intended to run on a SLURM cluster:
+For heavier runs, use the `cluster-slurm` skill and the workflow described in [`program.md`](program.md):
 
 - build the cached dataset on CPU
-- run surrogate training on GPU
+- run training on GPU
+- download checkpoints and logs after every completed run
 
-The repo includes the `cluster-slurm` skill so the agent can plan, submit, monitor, and fetch cluster workloads reproducibly.
-
-For the current Gautschi setup, the working high-level commands are:
-
-```bash
-# CPU dataset build
-python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
-  --profile gautschi-cpu \
-  --workload "build Burgers surrogate dataset" \
-  --prefix burgers-surrogate-prepare \
-  --command "python3 prepare.py --jobs 16" \
-  --submit-arg=--cpus-per-task=16 \
-  --submit-arg=--time=01:00:00 \
-  --submit-arg=--mem=32G \
-  --wait --fetch-logs --tail 200
-
-# GPU baseline training
-python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
-  --profile gautschi-gpu \
-  --workload "train Burgers surrogate baseline on GPU" \
-  --prefix burgers-surrogate-baseline \
-  --command "python3 prepare.py --help > /dev/null" \
-  --command "python3 train.py" \
-  --submit-arg=--time=01:00:00 \
-  --submit-arg=--mem=48G \
-  --wait --fetch-logs --tail 200
-```
-
-The lightweight `python3 prepare.py --help > /dev/null` command in the GPU run is intentional. The cluster runner auto-uploads Python scripts referenced by workload commands, so this guarantees that `prepare.py` is staged next to `train.py` for the remote `import prepare`.
-
-## Objective
-
-The keep/discard metric is:
-
-- **`val_rel_l2`** on the fixed validation split
-
-Lower is better. Test metrics are reported for context only and should not drive the search loop.
+The lightweight `python3 prepare.py --help > /dev/null` command in GPU workloads is intentional. The cluster runner auto-uploads Python scripts referenced in workload commands, which guarantees that `prepare.py` is staged next to `train.py` for the remote `import prepare`.
 
 ## License
 

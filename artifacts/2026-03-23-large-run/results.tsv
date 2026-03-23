@@ -1,0 +1,21 @@
+commit	val_rel_l2	memory_gb	status	description
+e0acd86	2.963700e-02	9.3	keep	baseline DeepONet resmlp/mlp Fourier
+eef5df7	2.916177e-02	9.3	keep	dynamic train inputs + branch reuse in step
+41e3d18	2.885810e-02	9.4	keep	pre-encode Fourier trunk coordinates
+d35f821	2.453603e-02	9.4	keep	wider branch/trunk hidden dims and latent size
+371e13a	2.549152e-02	9.4	discard	residual trunk network
+9bd693f	2.447602e-02	9.4	keep	increase Fourier feature count
+b05b04c	2.383589e-02	9.4	keep	increase DeepONet latent rank
+471163d	2.143364e-02	9.4	keep	widen branch and trunk hidden layers
+8abd6fa	2.169443e-02	9.4	discard	increase Fourier feature count again
+a8250f2	2.132726e-02	9.4	keep	increase latent rank again
+d1cc125	1.929636e-02	9.4	keep	widen branch and trunk hidden layers again
+5c40163	1.931581e-02	9.4	discard	bias example sampling toward low viscosities
+8f4c949	1.842415e-02	9.4	keep	widen branch and trunk hidden layers to 512
+eae37c3	1.793843e-02	9.4	keep	increase latent rank to 448
+891f367	1.801395e-02	9.4	discard	increase latent rank to 512
+3766296	1.758315e-02	9.4	keep	widen branch and trunk hidden layers to 576
+a37ff71	1.683636e-02	9.4	keep	widen branch and trunk hidden layers to 640
+85054c0	1.887364e-02	9.4	discard	increase branch and trunk depth to 5
+a985bc2	1.868167e-02	9.4	discard	extend finetuning phase to 40 percent
+c563be9	1.761705e-02	9.4	discard	lower cosine schedule floor

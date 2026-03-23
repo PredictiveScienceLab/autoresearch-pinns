@@ -1,0 +1,63 @@
+{
+  "workspace": "/private/tmp/autoresearch-codex-large.woja6k",
+  "results_tsv": "/private/tmp/autoresearch-codex-large.woja6k/results.tsv",
+  "num_experiments": 20,
+  "baseline": {
+    "index": 1,
+    "commit": "e0acd86",
+    "val_rel_l2": 0.029637,
+    "memory_gb": 9.3,
+    "status": "keep",
+    "description": "baseline DeepONet resmlp/mlp Fourier",
+    "run_dir": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-baseline-20260323-091614",
+    "metadata_path": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-baseline-20260323-091614/results/checkpoints/20260323-091830-nogit-pid2999705/metadata.json",
+    "predictions_path": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-baseline-20260323-091614/results/checkpoints/20260323-091830-nogit-pid2999705/predictions.npz",
+    "test_rel_l2": 0.029574600979685783
+  },
+  "best": {
+    "index": 17,
+    "commit": "a37ff71",
+    "val_rel_l2": 0.01683636,
+    "memory_gb": 9.4,
+    "status": "keep",
+    "description": "widen branch and trunk hidden layers to 640",
+    "run_dir": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-exp17-20260323-161924",
+    "metadata_path": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-exp17-20260323-161924/results/checkpoints/20260323-162006-nogit-pid3956665/metadata.json",
+    "predictions_path": "/private/tmp/autoresearch-codex-large.woja6k/results/fetched_runs/burgers-surrogate-large-exp17-20260323-161924/results/checkpoints/20260323-162006-nogit-pid3956665/predictions.npz",
+    "test_rel_l2": 0.01684633456170559
+  },
+  "progress": {
+    "baseline_val_rel_l2": 0.029637,
+    "best_val_rel_l2": 0.01683636,
+    "improvement_factor": 1.760297356435714,
+    "error_reduction_pct": 43.19141613523636
+  },
+  "example_selection": {
+    "rule": "test viscosity quantiles at 10%, 50%, and 90%",
+    "examples": [
+      {
+        "sample_index": 127,
+        "viscosity": 0.0032749276142567396,
+        "baseline_test_rel_l2": 0.07085145264863968,
+        "best_test_rel_l2": 0.04292361065745354
+      },
+      {
+        "sample_index": 373,
+        "viscosity": 0.01021361630409956,
+        "baseline_test_rel_l2": 0.10487763583660126,
+        "best_test_rel_l2": 0.06413812935352325
+      },
+      {
+        "sample_index": 436,
+        "viscosity": 0.03462522476911545,
+        "baseline_test_rel_l2": 0.0036342262756079435,
+        "best_test_rel_l2": 0.0024114169646054506
+      }
+    ]
+  },
+  "figures": {
+    "progress": "/Users/ibilion/Dropbox/PredictiveScienceLab/substack/autoresearch/artifacts/2026-03-23-large-run/figure_progress.svg",
+    "fields": "/Users/ibilion/Dropbox/PredictiveScienceLab/substack/autoresearch/artifacts/2026-03-23-large-run/figure_examples_fields.svg",
+    "slices": "/Users/ibilion/Dropbox/PredictiveScienceLab/substack/autoresearch/artifacts/2026-03-23-large-run/figure_examples_slices.svg"
+  }
+}

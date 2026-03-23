@@ -59,6 +59,19 @@ python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
 
 The explicit `prepare.py --help` command in the GPU workload is part of the contract: the cluster runner auto-uploads Python scripts referenced in workload commands, and `train.py` imports `prepare.py`.
 
+For cluster-backed runs, treat the printed `checkpoint_dir`, `checkpoint_meta`, and `prediction_file` as **remote paths** inside the cluster run directory. After every completed cluster run, download the checkpoint bundle back into this local repo, for example:
+
+```bash
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py download \
+  --run-id <RUN_ID> \
+  --remote-path results/checkpoints/<checkpoint-subdir> \
+  --local-path results/checkpoints
+```
+
+When `--local-path` is an existing directory, the cluster downloader preserves the remote checkpoint folder name automatically.
+
+Do not leave successful cluster experiments with their only checkpoint copy on the cluster scratch filesystem.
+
 **What you CAN do:**
 
 - Modify `train.py` only.
@@ -144,9 +157,10 @@ LOOP FOREVER:
 4. Run the experiment locally with `uv run train.py > run.log 2>&1`, or use the cluster recipe above for long runs.
 5. Read results: `grep "^val_rel_l2:\|^peak_vram_mb:" run.log`
 6. If the grep output is empty, the run crashed. Read `tail -n 50 run.log`, diagnose, and decide whether the idea should be fixed or discarded.
-7. Record the result in `results.tsv` (leave this file untracked).
-8. If `val_rel_l2` improved, keep the commit and continue from there.
-9. If `val_rel_l2` is equal or worse, revert to the previous good commit.
+7. For cluster runs, download the remote checkpoint bundle named in the summary back into local `results/checkpoints/` before moving on.
+8. Record the result in `results.tsv` (leave this file untracked).
+9. If `val_rel_l2` improved, keep the commit and continue from there.
+10. If `val_rel_l2` is equal or worse, revert to the previous good commit.
 
 Each run also leaves an untracked checkpoint bundle in `results/checkpoints/`. Keep these artifacts. They are part of the traceability contract and include saved validation/test predictions for later analysis.
 
