@@ -1,11 +1,11 @@
 """
-One-time preparation and fixed utilities for autoresearch Burgers surrogate runs.
+One-time preparation and fixed utilities for large-split Burgers surrogate runs.
 
 Usage:
     python prepare.py --jobs 1
     python prepare.py --force --jobs 32
 
-Artifacts are stored in ~/.cache/autoresearch-burgers/surrogate/.
+Artifacts are stored in ~/.cache/autoresearch-burgers/surrogate-large-100k20k500/.
 """
 
 from __future__ import annotations
@@ -37,14 +37,14 @@ IC_GRID_POINTS = 128
 FIELD_X_POINTS = 128
 FIELD_T_POINTS = 65
 
-TRAIN_SAMPLES = 512
-VAL_SAMPLES = 8
-TEST_SAMPLES = 8
+TRAIN_SAMPLES = 100_000
+VAL_SAMPLES = 20_000
+TEST_SAMPLES = 500
 DATASET_SEED = 20260322
 
 SOLVER_POINTS = 2049
 SOLVER_CFL = 0.2
-DATASET_BUILDER = "burgers-surrogate-hgrf-rusanov-ssp-rk3-v1"
+DATASET_BUILDER = "burgers-surrogate-hgrf-rusanov-ssp-rk3-large-100k20k500-v1"
 
 VISCOSITY_MIN = 2.5e-3
 VISCOSITY_MAX = 5.0e-2
@@ -65,7 +65,7 @@ MAX_INITIAL_ABS = 1.25
 # ---------------------------------------------------------------------------
 
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "autoresearch-burgers")
-SURROGATE_DIR = os.path.join(CACHE_DIR, "surrogate")
+SURROGATE_DIR = os.path.join(CACHE_DIR, "surrogate-large-100k20k500")
 DATASET_FILE = os.path.join(SURROGATE_DIR, "burgers_surrogate_dataset.npz")
 MANIFEST_FILE = os.path.join(SURROGATE_DIR, "manifest.json")
 

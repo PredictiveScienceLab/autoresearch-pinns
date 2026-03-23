@@ -3,6 +3,14 @@
 This repo adapts the autoresearch loop to a harder scientific machine learning problem:
 learning a Burgers surrogate operator over a family of viscosities and initial conditions.
 
+The tracked benchmark on `main` is the large fixed split:
+
+- `100000` train samples
+- `20000` validation samples
+- `500` test samples
+
+The tracked `train.py` on `main` is the promoted post-search operator configuration from the finished large run. The first run on any new experiment branch still counts as that branch's baseline.
+
 ## Setup
 
 To set up a new experiment, work with the user to:
@@ -13,7 +21,7 @@ To set up a new experiment, work with the user to:
    - `README.md` — repository context and workflow
    - `prepare.py` — fixed surrogate dataset harness and evaluation metric. Do not modify.
    - `train.py` — the only file you modify during experiments.
-4. **Verify dataset artifacts exist**: check that `~/.cache/autoresearch-burgers/surrogate/manifest.json` and `~/.cache/autoresearch-burgers/surrogate/burgers_surrogate_dataset.npz` exist. If they do not exist locally and you intend to run on cluster, build them on the cluster first instead of blocking on a local cache.
+4. **Verify dataset artifacts exist**: check that `~/.cache/autoresearch-burgers/surrogate-large-100k20k500/manifest.json` and `~/.cache/autoresearch-burgers/surrogate-large-100k20k500/burgers_surrogate_dataset.npz` exist. If they do not exist locally and you intend to run on cluster, build them on the cluster first instead of blocking on a local cache.
 5. **Initialize results.tsv**: create `results.tsv` with only the header row shown below. The baseline is logged after the first run.
 6. **Confirm and go**: once the cache and branch are ready, confirm setup looks good and begin the loop.
 
@@ -38,18 +46,18 @@ python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py doctor --profile 
 
 python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
   --profile gautschi-cpu \
-  --workload "build Burgers surrogate dataset" \
-  --prefix burgers-surrogate-prepare \
-  --command "python3 prepare.py --jobs 16" \
-  --submit-arg=--cpus-per-task=16 \
-  --submit-arg=--time=01:00:00 \
-  --submit-arg=--mem=32G \
+  --workload "build large Burgers surrogate dataset" \
+  --prefix burgers-surrogate-large-prepare \
+  --command "python3 prepare.py --jobs 32" \
+  --submit-arg=--cpus-per-task=32 \
+  --submit-arg=--time=08:00:00 \
+  --submit-arg=--mem=64G \
   --wait --fetch-logs --tail 200
 
 python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
   --profile gautschi-gpu \
-  --workload "train Burgers surrogate baseline on GPU" \
-  --prefix burgers-surrogate-baseline \
+  --workload "train large Burgers surrogate baseline on GPU" \
+  --prefix burgers-surrogate-large-baseline \
   --command "python3 prepare.py --help > /dev/null" \
   --command "python3 train.py" \
   --submit-arg=--time=01:00:00 \

@@ -67,10 +67,10 @@ COORD_ENCODING = "fourier"    # raw | fourier
 ACTIVATION = "silu"           # tanh | silu | gelu | relu
 BRANCH_DEPTH = 4
 TRUNK_DEPTH = 4
-BRANCH_HIDDEN_DIM = 256
-TRUNK_HIDDEN_DIM = 256
-LATENT_DIM = 192
-FOURIER_FEATURES = 64
+BRANCH_HIDDEN_DIM = 640
+TRUNK_HIDDEN_DIM = 640
+LATENT_DIM = 448
+FOURIER_FEATURES = 96
 FOURIER_SCALE = 3.0
 FOURIER_SEED = 0
 
@@ -87,7 +87,7 @@ INITIAL_SLICE_WEIGHT = 0.25
 
 # Optimization
 GRAD_CLIP_NORM = 1.0
-EVAL_BATCH_SIZE = 4
+EVAL_BATCH_SIZE = 64
 SCHEDULER_NAME = "cosine"     # constant | cosine
 WARMUP_FRACTION = 0.05
 MIN_LR_RATIO = 0.1
@@ -369,9 +369,16 @@ class DeepONetSurrogate(eqx.Module):
         branch_inputs = jnp.concatenate((normalized_initial, viscosity_feature), axis=-1)
         return jax.vmap(self.branch_net)(branch_inputs)
 
+    def trunk_features_encoded(self, encoded_coords: jax.Array) -> jax.Array:
+        return jax.vmap(self.trunk_net)(encoded_coords.astype(jnp.float32))
+
     def trunk_features(self, coords: jax.Array) -> jax.Array:
-        encoded_coords = self.coord_encoder(coords)
-        return jax.vmap(self.trunk_net)(encoded_coords)
+        return self.trunk_features_encoded(self.coord_encoder(coords))
+
+    def combine_branch_trunk_normalized(self, branch: jax.Array, trunk: jax.Array) -> jax.Array:
+        basis_coeffs = branch[:, :-1]
+        bias = branch[:, -1:]
+        return jnp.einsum("bl,ql->bq", basis_coeffs, trunk) / math.sqrt(self.latent_dim) + bias
 
     def predict_points_normalized(
         self,
@@ -379,11 +386,21 @@ class DeepONetSurrogate(eqx.Module):
         initial_conditions: jax.Array,
         coords: jax.Array,
     ) -> jax.Array:
+        return self.predict_points_normalized_encoded(
+            viscosity,
+            initial_conditions,
+            self.coord_encoder(coords),
+        )
+
+    def predict_points_normalized_encoded(
+        self,
+        viscosity: jax.Array,
+        initial_conditions: jax.Array,
+        encoded_coords: jax.Array,
+    ) -> jax.Array:
         branch = self.branch_coefficients(viscosity, initial_conditions)
-        basis_coeffs = branch[:, :-1]
-        bias = branch[:, -1:]
-        trunk = self.trunk_features(coords)
-        return jnp.einsum("bl,ql->bq", basis_coeffs, trunk) / math.sqrt(self.latent_dim) + bias
+        trunk = self.trunk_features_encoded(encoded_coords)
+        return self.combine_branch_trunk_normalized(branch, trunk)
 
     def predict_fields(
         self,
@@ -391,7 +408,19 @@ class DeepONetSurrogate(eqx.Module):
         initial_conditions: jax.Array,
         coords: jax.Array,
     ) -> jax.Array:
-        pred_norm = self.predict_points_normalized(viscosity, initial_conditions, coords)
+        return self.predict_fields_encoded(
+            viscosity,
+            initial_conditions,
+            self.coord_encoder(coords),
+        )
+
+    def predict_fields_encoded(
+        self,
+        viscosity: jax.Array,
+        initial_conditions: jax.Array,
+        encoded_coords: jax.Array,
+    ) -> jax.Array:
+        pred_norm = self.predict_points_normalized_encoded(viscosity, initial_conditions, encoded_coords)
         pred = self.denormalize_field(pred_norm)
         return pred.reshape((pred.shape[0], self.field_t_points, self.field_x_points))
 
@@ -407,26 +436,29 @@ def build_model(config: ModelConfig, normalization: Normalization, *, key: jax.A
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class TrainingData:
+class TrainingData(eqx.Module):
     train_viscosity: jax.Array
     train_initial_conditions: jax.Array
     train_fields_normalized: jax.Array
-    query_coords: jax.Array
-    initial_coords: jax.Array
-    train_size: int
-    query_size: int
-    initial_size: int
+    encoded_query_coords: jax.Array
+    encoded_initial_coords: jax.Array
+    train_size: int = eqx.field(static=True)
+    query_size: int = eqx.field(static=True)
+    initial_size: int = eqx.field(static=True)
 
 
-@dataclass(frozen=True)
-class SamplingPools:
+class SamplingPools(eqx.Module):
     example_pool: jax.Array
-    example_pool_size: int
+    example_pool_size: int = eqx.field(static=True)
     point_pool: jax.Array
-    point_pool_size: int
+    point_pool_size: int = eqx.field(static=True)
     initial_pool: jax.Array
-    initial_pool_size: int
+    initial_pool_size: int = eqx.field(static=True)
+
+
+class TrainInputs(eqx.Module):
+    data: TrainingData
+    pools: SamplingPools
 
 
 @dataclass(frozen=True)
@@ -447,21 +479,32 @@ def build_normalization(dataset: dict[str, np.ndarray]) -> Normalization:
     )
 
 
-def build_training_data(dataset: dict[str, np.ndarray], normalization: Normalization) -> TrainingData:
+def build_training_data(
+    dataset: dict[str, np.ndarray],
+    normalization: Normalization,
+    model_config: ModelConfig,
+) -> TrainingData:
     train_fields = jnp.asarray(dataset["train_fields"], dtype=jnp.float32)
     train_fields_normalized = (
         train_fields - normalization.field_mean
     ) / normalization.field_std
     query_coords = jnp.asarray(dataset["query_coords"], dtype=jnp.float32)
-    initial_coords = query_coords[:FIELD_X_POINTS]
+    encoder = CoordinateEncoder(
+        model_config.coord_encoding,
+        fourier_features=model_config.fourier_features,
+        fourier_scale=model_config.fourier_scale,
+        fourier_seed=model_config.fourier_seed,
+    )
+    encoded_query_coords = encoder(query_coords)
+    encoded_initial_coords = encoded_query_coords[:FIELD_X_POINTS]
     return TrainingData(
         train_viscosity=jnp.asarray(dataset["train_viscosity"], dtype=jnp.float32),
         train_initial_conditions=jnp.asarray(dataset["train_initial_conditions"], dtype=jnp.float32),
         train_fields_normalized=train_fields_normalized.reshape((train_fields.shape[0], -1)),
-        query_coords=query_coords,
-        initial_coords=initial_coords,
+        encoded_query_coords=encoded_query_coords,
+        encoded_initial_coords=encoded_initial_coords,
         train_size=int(dataset["train_viscosity"].shape[0]),
-        query_size=int(query_coords.shape[0]),
+        query_size=int(encoded_query_coords.shape[0]),
         initial_size=FIELD_X_POINTS,
     )
 
@@ -597,69 +640,72 @@ def scale_updates(updates: Any, learning_rate: jax.Array) -> Any:
     )
 
 
+def sample_batch(train_inputs: TrainInputs, step_index: jax.Array) -> dict[str, jax.Array]:
+    data = train_inputs.data
+    pools = train_inputs.pools
+
+    example_start = step_index * EXAMPLE_BATCH_SIZE
+    point_start = step_index * (POINT_BATCH_SIZE * 3)
+    initial_start = step_index * (INITIAL_SLICE_POINTS * 5)
+
+    example_indices = take_cyclic(pools.example_pool, EXAMPLE_BATCH_SIZE, example_start)
+    point_indices = take_cyclic(pools.point_pool, POINT_BATCH_SIZE, point_start)
+    initial_indices = take_cyclic(pools.initial_pool, INITIAL_SLICE_POINTS, initial_start)
+
+    batch_viscosity = jnp.take(data.train_viscosity, example_indices, axis=0)
+    batch_initial = jnp.take(data.train_initial_conditions, example_indices, axis=0)
+    batch_fields = jnp.take(data.train_fields_normalized, example_indices, axis=0)
+    batch_targets = jnp.take(batch_fields, point_indices, axis=1)
+    initial_targets = jnp.take(batch_initial, initial_indices, axis=1)
+    return {
+        "viscosity": batch_viscosity,
+        "initial_conditions": batch_initial,
+        "encoded_coords": jnp.take(data.encoded_query_coords, point_indices, axis=0),
+        "targets": batch_targets,
+        "encoded_initial_coords": jnp.take(data.encoded_initial_coords, initial_indices, axis=0),
+        "initial_targets": initial_targets,
+    }
+
+
+def compute_losses(model: DeepONetSurrogate, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
+    branch = model.branch_coefficients(batch["viscosity"], batch["initial_conditions"])
+
+    pred = model.combine_branch_trunk_normalized(branch, model.trunk_features_encoded(batch["encoded_coords"]))
+    supervised_loss = jnp.mean(loss_values(pred, batch["targets"]))
+
+    initial_pred = model.combine_branch_trunk_normalized(
+        branch,
+        model.trunk_features_encoded(batch["encoded_initial_coords"]),
+    )
+    initial_target_norm = model.normalize_field(batch["initial_targets"])
+    initial_loss = jnp.mean(loss_values(initial_pred, initial_target_norm))
+
+    total = supervised_loss + INITIAL_SLICE_WEIGHT * initial_loss
+    return {
+        "total": total,
+        "supervised": supervised_loss,
+        "initial_slice": initial_loss,
+    }
+
+
 def make_train_step(
-    data: TrainingData,
-    pools: SamplingPools,
     optimizer: optax.GradientTransformation,
-) -> Callable[[eqx.Module, optax.OptState, jax.Array, jax.Array], tuple[eqx.Module, optax.OptState, dict[str, jax.Array]]]:
-    def sample_batch(step_index: jax.Array) -> dict[str, jax.Array]:
-        example_start = step_index * EXAMPLE_BATCH_SIZE
-        point_start = step_index * (POINT_BATCH_SIZE * 3)
-        initial_start = step_index * (INITIAL_SLICE_POINTS * 5)
-
-        example_indices = take_cyclic(pools.example_pool, EXAMPLE_BATCH_SIZE, example_start)
-        point_indices = take_cyclic(pools.point_pool, POINT_BATCH_SIZE, point_start)
-        initial_indices = take_cyclic(pools.initial_pool, INITIAL_SLICE_POINTS, initial_start)
-
-        batch_viscosity = jnp.take(data.train_viscosity, example_indices, axis=0)
-        batch_initial = jnp.take(data.train_initial_conditions, example_indices, axis=0)
-        batch_fields = jnp.take(data.train_fields_normalized, example_indices, axis=0)
-        batch_targets = jnp.take(batch_fields, point_indices, axis=1)
-        initial_targets = jnp.take(batch_initial, initial_indices, axis=1)
-        return {
-            "viscosity": batch_viscosity,
-            "initial_conditions": batch_initial,
-            "coords": jnp.take(data.query_coords, point_indices, axis=0),
-            "targets": batch_targets,
-            "initial_coords": jnp.take(data.initial_coords, initial_indices, axis=0),
-            "initial_targets": initial_targets,
-        }
-
-    def compute_losses(model: DeepONetSurrogate, batch: dict[str, jax.Array]) -> dict[str, jax.Array]:
-        pred = model.predict_points_normalized(
-            batch["viscosity"],
-            batch["initial_conditions"],
-            batch["coords"],
-        )
-        supervised_loss = jnp.mean(loss_values(pred, batch["targets"]))
-
-        initial_pred = model.predict_points_normalized(
-            batch["viscosity"],
-            batch["initial_conditions"],
-            batch["initial_coords"],
-        )
-        initial_target_norm = model.normalize_field(batch["initial_targets"])
-        initial_loss = jnp.mean(loss_values(initial_pred, initial_target_norm))
-
-        total = supervised_loss + INITIAL_SLICE_WEIGHT * initial_loss
-        return {
-            "total": total,
-            "supervised": supervised_loss,
-            "initial_slice": initial_loss,
-        }
-
-    def loss_and_metrics(model: DeepONetSurrogate, step_index: jax.Array) -> tuple[jax.Array, dict[str, jax.Array]]:
-        metrics = compute_losses(model, sample_batch(step_index))
+) -> Callable[[TrainInputs, eqx.Module, optax.OptState, jax.Array, jax.Array], tuple[eqx.Module, optax.OptState, dict[str, jax.Array]]]:
+    def loss_and_metrics(model: DeepONetSurrogate, batch: dict[str, jax.Array]) -> tuple[jax.Array, dict[str, jax.Array]]:
+        metrics = compute_losses(model, batch)
         return metrics["total"], metrics
 
+    # Keep the large training arrays out of the lowered program constants.
     @eqx.filter_jit
     def step_fn(
+        train_inputs: TrainInputs,
         model: DeepONetSurrogate,
         opt_state: optax.OptState,
         step_index: jax.Array,
         learning_rate: jax.Array,
     ) -> tuple[DeepONetSurrogate, optax.OptState, dict[str, jax.Array]]:
-        (loss, metrics), grads = eqx.filter_value_and_grad(loss_and_metrics, has_aux=True)(model, step_index)
+        batch = sample_batch(train_inputs, step_index)
+        (loss, metrics), grads = eqx.filter_value_and_grad(loss_and_metrics, has_aux=True)(model, batch)
         updates, opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_inexact_array))
         model = eqx.apply_updates(model, scale_updates(updates, learning_rate))
         return model, opt_state, {
@@ -673,22 +719,21 @@ def make_train_step(
 
 def build_phase_runtimes(
     phases: tuple[OptimizerPhase, ...],
-    data: TrainingData,
-    pools: SamplingPools,
 ) -> list[PhaseRuntime]:
     runtimes = []
     for phase in phases:
         optimizer = build_optimizer(phase)
-        step_fn = make_train_step(data, pools, optimizer)
+        step_fn = make_train_step(optimizer)
         runtimes.append(PhaseRuntime(phase=phase, optimizer=optimizer, step_fn=step_fn))
     return runtimes
 
 
-def warmup_phase_runtimes(runtimes: list[PhaseRuntime], model: DeepONetSurrogate) -> None:
+def warmup_phase_runtimes(runtimes: list[PhaseRuntime], train_inputs: TrainInputs, model: DeepONetSurrogate) -> None:
     step_index = jnp.asarray(0, dtype=jnp.int32)
     for runtime in runtimes:
         opt_state = runtime.optimizer.init(eqx.filter(model, eqx.is_inexact_array))
         _, _, metrics = runtime.step_fn(
+            train_inputs,
             model,
             opt_state,
             step_index,
@@ -697,10 +742,10 @@ def warmup_phase_runtimes(runtimes: list[PhaseRuntime], model: DeepONetSurrogate
         jax.block_until_ready(metrics["total"])
 
 
-def build_predict_fields(query_coords: jax.Array) -> Callable[[DeepONetSurrogate, jax.Array, jax.Array], jax.Array]:
+def build_predict_fields(encoded_query_coords: jax.Array) -> Callable[[DeepONetSurrogate, jax.Array, jax.Array], jax.Array]:
     @eqx.filter_jit
     def predict_fields(model: DeepONetSurrogate, viscosity: jax.Array, initial_conditions: jax.Array) -> jax.Array:
-        return model.predict_fields(viscosity, initial_conditions, query_coords)
+        return model.predict_fields_encoded(viscosity, initial_conditions, encoded_query_coords)
 
     return predict_fields
 
@@ -915,7 +960,6 @@ def main() -> None:
     ensure_dataset_artifacts(require_existing=True)
     dataset = load_dataset_artifacts()
     normalization = build_normalization(dataset)
-    data = build_training_data(dataset, normalization)
 
     model_config = ModelConfig(
         model_family=MODEL_FAMILY,
@@ -932,6 +976,7 @@ def main() -> None:
         fourier_scale=FOURIER_SCALE,
         fourier_seed=FOURIER_SEED,
     )
+    data = build_training_data(dataset, normalization, model_config)
 
     phase_weights = validate_phases(OPTIMIZER_PHASES)
     phase_end_times = []
@@ -943,9 +988,10 @@ def main() -> None:
     rng = jax.random.PRNGKey(SEED)
     model = build_model(model_config, normalization, key=rng)
     pools = build_sampling_pools(data)
-    runtimes = build_phase_runtimes(OPTIMIZER_PHASES, data, pools)
-    warmup_phase_runtimes(runtimes, model)
-    predict_fields = build_predict_fields(data.query_coords)
+    train_inputs = TrainInputs(data=data, pools=pools)
+    runtimes = build_phase_runtimes(OPTIMIZER_PHASES)
+    warmup_phase_runtimes(runtimes, train_inputs, model)
+    predict_fields = build_predict_fields(data.encoded_query_coords)
 
     num_params = count_parameters(model)
     device = jax.devices()[0]
@@ -988,7 +1034,13 @@ def main() -> None:
         learning_rate_array = jnp.asarray(learning_rate, dtype=jnp.float32)
 
         t0 = time.time()
-        model, opt_state, metrics = runtime.step_fn(model, opt_state, step_index, learning_rate_array)
+        model, opt_state, metrics = runtime.step_fn(
+            train_inputs,
+            model,
+            opt_state,
+            step_index,
+            learning_rate_array,
+        )
         jax.block_until_ready(metrics["total"])
         dt = time.time() - t0
         training_seconds += dt

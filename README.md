@@ -1,45 +1,112 @@
 # autoresearch-pinns
 
-This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for scientific machine learning. The core task here is operator learning for the 1D viscous Burgers equation: given a viscosity `nu` and an initial condition sampled from a hierarchical Gaussian random field prior, predict the full spatio-temporal solution field `u(x, t)`.
+This repo repurposes [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) for scientific machine learning. The task is operator learning for the 1D viscous Burgers equation: given a viscosity `nu` and an initial condition sampled from a hierarchical Gaussian random field prior, predict the full spatio-temporal solution field `u(x, t)`.
 
-The repo is intentionally small:
+`main` now reflects the large operator-learning setup that was used for the finished 20-experiment cluster run. A fresh clone can rebuild the fixed dataset, rerun the promoted model on that benchmark, and regenerate the committed figures without depending on the old temp workspace.
 
-- [`prepare.py`](prepare.py): fixed benchmark harness. It samples the prior, solves Burgers with a deterministic finite-volume SSP-RK3 solver, caches the dataset, and owns the evaluation metric.
-- [`train.py`](train.py): the only editable experiment surface.
-- [`program.md`](program.md): the autoresearch protocol.
+## Repo Structure
 
-## Tracked Benchmark
+The repo stays intentionally small:
 
-The tracked repo code currently defines the default small benchmark:
+- [`prepare.py`](prepare.py): fixed benchmark harness. It samples the hierarchical prior, solves Burgers with a deterministic finite-volume SSP-RK3 solver, caches the dataset, and owns the evaluation metric.
+- [`train.py`](train.py): the editable experiment surface. It contains the surrogate architecture, optimizer schedule, batching, and checkpoint-writing logic.
+- [`program.md`](program.md): the autoresearch protocol for long-running search.
+
+## Fixed Benchmark On Main
+
+The tracked benchmark on `main` is the large operator split:
 
 - domain: `x in [-1, 1]`, `t in [0, 1]`
 - PDE: `u_t + u u_x - nu u_xx = 0`
 - viscosity prior: log-uniform on `[2.5e-3, 5.0e-2]`
 - initial-condition prior: hierarchical Gaussian random field with sampled amplitude, lengthscale, and bias
-- dataset split: `512` train, `8` validation, `8` test
+- dataset split: `100000` train, `20000` validation, `500` test
 - grids: `128` initial-condition points and a `65 x 128` solution field
 - experiment budget: `900` seconds of training per run
+- cache path: `~/.cache/autoresearch-burgers/surrogate-large-100k20k500/`
 
-The cached dataset for the tracked benchmark lives under `~/.cache/autoresearch-burgers/surrogate/`.
+`prepare.py` is fixed during experiments. `train.py` is the only file the search loop should mutate.
 
-The baseline in [`train.py`](train.py) is an Equinox/JAX DeepONet-style surrogate:
+## Current Promoted Model
 
-- a branch network processes the discretized initial condition plus viscosity
-- a trunk network processes space-time coordinates
-- their latent interaction reconstructs the field
-- training uses pointwise supervision plus an auxiliary `t=0` consistency loss
+The current tracked `train.py` is the promoted post-search operator configuration from the large run, not the historical search baseline. It is an Equinox/JAX DeepONet-style surrogate with:
 
-The keep/discard metric is always **`val_rel_l2`** on the fixed validation split. Test metrics are reported for context only.
+- `resmlp` branch network
+- `mlp` trunk network
+- Fourier coordinate encoding
+- branch/trunk hidden width `640`
+- latent dimension `448`
+- pointwise field supervision plus an auxiliary `t=0` consistency loss
 
-## Large-Run Results
+That means a fresh rerun from `main` should target the promoted large-run configuration. The historical search trajectory, including the earlier weaker baseline, is preserved in the committed results bundle.
 
-We also ran a larger isolated cluster experiment with a much harder split:
+The keep/discard metric remains **`val_rel_l2`** on the fixed validation split. Test metrics are reported for context only and should not drive the search.
 
-- `100000` train
-- `20000` validation
-- `500` test
+## Rerun From Scratch
 
-That large run was executed from an isolated temp clone so the tracked repo code stayed stable while the autonomous search loop ran on Gautschi. The committed artifact bundle here captures the outputs from that finished run:
+Requirements:
+
+- Python `3.14.0` preferred via [`.python-version`](.python-version)
+- [`uv`](https://docs.astral.sh/uv/)
+- enough CPU/GPU memory for JAX training
+
+Local rerun:
+
+```bash
+uv sync
+uv run prepare.py --jobs 8
+uv run train.py
+```
+
+For the full large benchmark, the one-time dataset build is much heavier than a single training run. Local execution works, but the intended path is cluster-backed CPU preparation plus GPU training.
+
+`uv` keeps dependencies in the repo-local `.venv/` instead of the global environment.
+
+## Exact Cluster Replay
+
+For Gautschi, these are the exact replay commands the repo now documents:
+
+```bash
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py doctor --profile gautschi-cpu
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py doctor --profile gautschi-gpu
+
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-cpu \
+  --workload "build large Burgers surrogate dataset" \
+  --prefix burgers-surrogate-large-prepare \
+  --command "python3 prepare.py --jobs 32" \
+  --submit-arg=--cpus-per-task=32 \
+  --submit-arg=--time=08:00:00 \
+  --submit-arg=--mem=64G \
+  --wait --fetch-logs --tail 200
+
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py run-workload \
+  --profile gautschi-gpu \
+  --workload "train large Burgers surrogate baseline on GPU" \
+  --prefix burgers-surrogate-large-baseline \
+  --command "python3 prepare.py --help > /dev/null" \
+  --command "python3 train.py" \
+  --submit-arg=--time=01:00:00 \
+  --submit-arg=--mem=48G \
+  --wait --fetch-logs --tail 200
+```
+
+The lightweight `python3 prepare.py --help > /dev/null` command in the GPU workload is intentional. The cluster runner auto-uploads Python scripts referenced in workload commands, which guarantees that `prepare.py` is staged next to `train.py` for the remote `import prepare`.
+
+After a completed cluster run, download the saved checkpoint bundle back into the repo:
+
+```bash
+python3 ~/.codex/skills/cluster-slurm/scripts/cluster_slurm.py download \
+  --run-id <RUN_ID> \
+  --remote-path results/checkpoints/<checkpoint-subdir> \
+  --local-path results/checkpoints
+```
+
+The checkpoint bundle includes machine-readable metadata and saved validation/test predictions so later figure generation does not require rerunning old jobs.
+
+## Committed Large-Run Results
+
+The committed artifact bundle captures the finished 20-experiment cluster search that promoted the current tracked configuration:
 
 - ledger copy: [`artifacts/2026-03-23-large-run/results.tsv`](artifacts/2026-03-23-large-run/results.tsv)
 - machine-readable summary: [`artifacts/2026-03-23-large-run/summary.json`](artifacts/2026-03-23-large-run/summary.json)
@@ -50,20 +117,20 @@ That large run was executed from an isolated temp clone so the tracked repo code
   - [`artifacts/2026-03-23-large-run/autoresearch_loop_tikz.tex`](artifacts/2026-03-23-large-run/autoresearch_loop_tikz.tex)
   - [`artifacts/2026-03-23-large-run/autoresearch_loop_tikz.pdf`](artifacts/2026-03-23-large-run/autoresearch_loop_tikz.pdf)
 
-Headline result from that large run:
+Headline numbers from that run:
 
-- baseline: `val_rel_l2 = 2.963700e-02`
-- best run: `val_rel_l2 = 1.683636e-02`
+- historical search baseline: `val_rel_l2 = 2.963700e-02`
+- best kept run: `val_rel_l2 = 1.683636e-02`
 - relative improvement: `1.76x`
 - validation error reduction: `43.19%`
 
-The best run in that 20-experiment search was experiment `17`, commit `a37ff71`, described in the ledger as `widen branch and trunk hidden layers to 640`.
+The best run in that search was experiment `17`, commit `a37ff71`, described in the ledger as `widen branch and trunk hidden layers to 640`.
 
-## Reproducing Figures
+## Regenerate The Figures
 
 The figure generator is committed as [`scripts/make_large_run_figures.py`](scripts/make_large_run_figures.py).
 
-It expects a fetched large-run workspace with the cluster artifacts already mirrored locally. Example:
+It expects a fetched large-run workspace with the cluster artifacts mirrored locally. Example:
 
 ```bash
 python3 scripts/make_large_run_figures.py \
@@ -72,28 +139,6 @@ python3 scripts/make_large_run_figures.py \
 ```
 
 This script reads the fetched checkpoint bundles, cross-checks every `results.tsv` row against the saved checkpoint metadata, and regenerates the committed figures.
-
-## Local Usage
-
-Requirements: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and enough compute for JAX training.
-
-```bash
-uv sync
-uv run prepare.py --jobs 8
-uv run train.py
-```
-
-`uv` keeps dependencies in the repo-local `.venv/` instead of the global environment.
-
-## Cluster Usage
-
-For heavier runs, use the `cluster-slurm` skill and the workflow described in [`program.md`](program.md):
-
-- build the cached dataset on CPU
-- run training on GPU
-- download checkpoints and logs after every completed run
-
-The lightweight `python3 prepare.py --help > /dev/null` command in GPU workloads is intentional. The cluster runner auto-uploads Python scripts referenced in workload commands, which guarantees that `prepare.py` is staged next to `train.py` for the remote `import prepare`.
 
 ## License
 
