@@ -1,0 +1,52 @@
+{
+  "parameter_delta": {
+    "absolute": 206080,
+    "percent": 3.89132904710589
+  },
+  "symmetry_baseline": {
+    "model_config": {
+      "activation": "silu",
+      "boundary_mode": "none",
+      "branch_depth": 4,
+      "branch_family": "resmlp",
+      "branch_hidden_dim": 640,
+      "branch_input_mode": "raw",
+      "coord_encoding": "fourier",
+      "fourier_features": 96,
+      "fourier_scale": 3.0,
+      "fourier_seed": 0,
+      "latent_dim": 448,
+      "model_family": "deeponet",
+      "symmetry_mode": "none",
+      "trunk_depth": 4,
+      "trunk_family": "mlp",
+      "trunk_hidden_dim": 640
+    },
+    "num_params": 5295877,
+    "num_params_m": 5.295877,
+    "val_rel_l2": 0.016677971929311752
+  },
+  "symmetry_best": {
+    "model_config": {
+      "activation": "silu",
+      "boundary_mode": "quadratic_dirichlet",
+      "branch_depth": 4,
+      "branch_family": "resmlp",
+      "branch_hidden_dim": 640,
+      "branch_input_mode": "reflection_sign_split",
+      "coord_encoding": "fourier_parity",
+      "fourier_features": 96,
+      "fourier_scale": 3.0,
+      "fourier_seed": 0,
+      "latent_dim": 448,
+      "model_family": "deeponet",
+      "symmetry_mode": "reflection_sign_projection",
+      "trunk_depth": 4,
+      "trunk_family": "mlp",
+      "trunk_hidden_dim": 640
+    },
+    "num_params": 5501957,
+    "num_params_m": 5.501957,
+    "val_rel_l2": 0.009743769653141499
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "focused_cutoff_val_rel_l2": 0.03111885,
+  "focused_visible_rows": 37,
+  "hidden_crashed_rows": 1,
+  "hidden_error_too_high_rows": 2,
+  "hidden_rows": 3,
+  "large_best_val_rel_l2": 0.01683636,
+  "large_rows": 20,
+  "overall_baseline_val_rel_l2": 0.029637,
+  "overall_error_reduction_pct": 67.12295441508924,
+  "overall_improvement_factor": 3.04163583500021,
+  "symmetry_baseline_val_rel_l2": 0.01667797,
+  "symmetry_best_global_index": 26,
+  "symmetry_best_val_rel_l2": 0.00974377,
+  "symmetry_error_reduction_pct": 41.57700247692016,
+  "symmetry_improvement_factor": 1.7116547291243533,
+  "symmetry_rows": 20
+}

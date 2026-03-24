@@ -1,0 +1,21 @@
+commit	val_rel_l2	memory_gb	status	description
+26ecc84	1.667797e-02	9.4	keep	baseline control with no explicit symmetry; establish score before reflection-sign equivariance search
+5726e73	0.000000e+00	0.0	crash	exact reflection-sign equivariance projection crashed on h001 with CUDA backend init failure before symmetry evaluation
+5726e73	1.032608e-02	9.4	keep	exact reflection-sign equivariance projection over the finite-domain mirror-sign orbit
+0b8d919	1.001906e-02	9.4	keep	exact reflection-sign equivariance plus branch split into invariant and antiinvariant parity components
+c5d9607	9.795452e-03	9.4	keep	exact reflection-sign equivariance plus branch parity split and parity-aware Fourier trunk channels over the finite-domain mirror-sign orbit
+d4f60d6	9.743770e-03	9.4	keep	exact reflection-sign equivariance plus an even Dirichlet envelope that preserves mirror-sign symmetry on the finite interval
+8a5aa67	1.172041e-02	9.3	discard	exact reflection-sign equivariance with a nonperiodic raw parity trunk and even Dirichlet envelope on the bounded mirror-sign problem
+5cfe0e2	9.919890e-03	9.4	discard	exact reflection-sign equivariance with parity-aware Fourier trunk and Dirichlet envelope but no branch parity split on the bounded mirror-sign problem
+f015ea1	1.681457e-02	9.4	discard	soft mirror-sign bias only: parity-aware branch and trunk with even Dirichlet envelope but no exact reflection-sign orbit projection
+c2e8f31	3.920993e-01	9.4	discard	tests and rejects reflection-only projection on the bounded Burgers problem, where x-reflection without sign flip breaks the advection symmetry
+a6d77f9	6.471309e+01	9.4	discard	tests and rejects sign-only projection on the bounded Burgers problem, where global sign flip without reflection is not a symmetry of the nonlinear dynamics
+08501b3	1.138316e-02	9.3	discard	tests and rejects exact reflection-sign equivariance with raw x,t trunk coordinates on the finite mirror-sign benchmark; parity-aware trunk features matter
+422cc6a	1.173949e-02	9.4	discard	tests and rejects exact reflection-sign symmetry with factorized even/odd trunk irreps on the finite mirror-sign benchmark; the explicit trunk split underperforms the prior parity encoding
+b492610	1.110752e-02	9.4	discard	tests exact reflection-sign latent irrep projection with factorized even/odd trunk channels on the finite mirror-sign benchmark; better than output-space irrep splitting but still worse than the prior parity encoder
+b4434d6	1.146354e-02	9.4	discard	tests exact reflection-sign latent irrep projection with a quartic even Dirichlet envelope on the finite mirror-sign benchmark; the stronger boundary factor hurts
+c0f5ca0	9.810751e-03	9.4	discard	tests exact reflection-sign symmetry with a wider parity-aware Fourier trunk basis on the finite mirror-sign benchmark; extra random harmonics slightly regress versus the tighter basis
+0b9299c	1.053332e-02	9.4	discard	tests exact reflection-sign symmetry with bounded Dirichlet parity trunk harmonics on the finite mirror-sign benchmark; deterministic wall-matched harmonics underperform the random parity Fourier basis
+06d62df	9.918229e-03	9.4	discard	tests exact reflection-sign symmetry with a cosine Dirichlet wall envelope on the finite mirror-sign benchmark; the first-eigenfunction wall shape trails the simpler quadratic envelope
+b9ef979	9.848469e-03	9.4	discard	tests exact reflection-sign symmetry with a smoother parity-aware Fourier trunk scale on the finite mirror-sign benchmark; lowering the bounded-domain feature scale slightly regresses versus the prior best
+e4deb26	9.764604e-03	9.4	discard	tests exact reflection-sign symmetry with a larger mirrored latent basis on the finite mirror-sign benchmark; extra equivariant coefficients nearly match but do not beat the smaller latent baseline
