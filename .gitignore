@@ -31,3 +31,6 @@ run.log
 artifacts/*/autoresearch_loop_tikz.aux
 artifacts/*/autoresearch_loop_tikz.log
 artifacts/*/autoresearch_loop_tikz_preview.png
+artifacts/*/symmetry_note.aux
+artifacts/*/symmetry_note.log
+artifacts/*/symmetry_note.out
